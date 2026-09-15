@@ -14,11 +14,11 @@
 
 | Họ và tên | MSSV | GitHub | Vai trò và công việc | File/commit/PR |
 |---|---|---|---|---|
-| Nguyễn Anh Tuấn| 2A202602700| harrynguyen127| Teamlead. UI, transcript & report: làm UI chat hiện tool call/input/kết quả-lỗi/version, lưu transcript, tổng hợp REPORT.md (cách chạy, trước/sau, giới hạn, link evidence) và điều phối TEAM.md | |
-| Nguyễn Hữu Thành | 2A202602813 | nhthanh1106 | Tiếp tục lặp (v2, v3): tiếp nối v1, mỗi vòng 1 giả thuyết + 1 thay đổi chính, chạy lại, so sánh metric/trace, cập nhật version log | |
-| Hà Thị Mỹ Linh | 2A202602619 | | Bộ case & an toàn: viết 10 case nhóm (5 một lượt + 5 nhiều lượt) vào eval_group.json, chạy 12 case adversarial, phân tích ≥3 case (hỏi lại/xác nhận/hủy/dữ liệu) | |
-| Đặng Quang Hưng | 2A202602719 | hungdq1306 | Baseline & Eval infra (v0): chạy preflight, chạy v0 gốc, đọc lỗi/trace, phân loại failure (sai tool/sai input/thiếu info/nhiều lượt/an toàn). Giao sản phẩm: log v0 + danh sách giả thuyết cho cả nhóm dùng | |
-| Nguyễn Hoàng Anh | 2A202602811 | hoanganhIT04 | Prompt & tool declaration (v1): dựa trên giả thuyết của v0, sửa system_prompt.md + tools.yaml, chạy v1, so sánh với v0, ghi vào version_log.csv | |
+| Nguyễn Anh Tuấn| 2A202602700| harrynguyen127| Teamlead. UI, transcript & report: làm UI chat hiện tool call/input/kết quả-lỗi/version, lưu transcript, tổng hợp REPORT.md (cách chạy, trước/sau, giới hạn, link evidence) và điều phối TEAM.md | `4c46b46` (UI), `bce10b6` (transcript), `de5349f`+`d8f7406` (version_log, REPORT.md) |
+| Nguyễn Hữu Thành | 2A202602813 | nhthanh1106 | Tiếp tục lặp (v2, v3): tiếp nối v1, mỗi vòng 1 giả thuyết + 1 thay đổi chính, chạy lại, so sánh metric/trace, cập nhật version log |  |
+| Hà Thị Mỹ Linh | 2A202602619 | | Bộ case & an toàn: viết 10 case nhóm (5 một lượt + 5 nhiều lượt) vào eval_group.json, chạy 12 case adversarial, phân tích ≥3 case (hỏi lại/xác nhận/hủy/dữ liệu) | `af3ea22` (`data/eval_group.json`, run group/adversarial, cập nhật REPORT.md) |
+| Đặng Quang Hưng | 2A202602719 | hungdq1306 | Baseline & Eval infra (v0): chạy preflight, chạy v0 gốc, đọc lỗi/trace, phân loại failure (sai tool/sai input/thiếu info/nhiều lượt/an toàn). Giao sản phẩm: log v0 + danh sách giả thuyết cho cả nhóm dùng | `48c2f3e` (`HYPOTHESES_v0.md`), `e626aca` (`version_log.csv` dòng v0) |
+| Nguyễn Hoàng Anh | 2A202602811 | hoanganhIT04 | Prompt & tool declaration (v1): dựa trên giả thuyết của v0, sửa system_prompt.md + tools.yaml, chạy v1, so sánh với v0, ghi vào version_log.csv | `95a3a71` (`system_prompt.md`, `tools.yaml`) |
 
 ## Quy trình v0–v3 và bàn giao
 
@@ -42,11 +42,11 @@ Mỗi người tự điền phần của mình (không viết thay người khá
 
 ### Nguyễn Anh Tuấn — 2A202602700
 
-- Phần việc và file/commit/PR: Teamlead — UI/transcript/report theo phân công gốc, cộng thêm hoàn thiện v2/v3 thật (giả thuyết mới + sửa `system_prompt.md`/`tools.yaml` + chạy lại toàn bộ base/group/adversarial để soát regression) khi phát hiện lần chạy v2/v3 trước đó chỉ đổi nhãn `--version`. Commit chính: `b793666` (v2: chặn xác nhận giả mạo/bị chèn), `e81178b` (v3: chặn rò rỉ mã nội bộ vào `search_device_info`), `de5349f` (rebuild `version_log.csv`, thêm 4 transcript UI cho 4 kịch bản bắt buộc), cùng các đoạn điền `REPORT.md` (B1–B7, A1, A4) và `TEAM.md` (mục Nhận xét chung, mục này).
-- Quyết định, khó khăn và cách xử lý: Phát hiện qua so sánh `prompt_hash`/`tools_hash` trong chính các file run rằng v2 và v3 trước đó dùng đúng artifact của v1 (chỉ đổi nhãn khi chạy `run_eval.py`) — vi phạm quy tắc rubric "chỉ đổi nhãn". Thay vì xoá lịch sử cũ, giữ nguyên commit đó và ghi rõ trong `version_log.csv`/`REPORT.md` rằng đây là quy trình đã tự phát hiện và sửa, rồi làm lại v2/v3 bằng thay đổi thật dựa trên phân tích cụ thể từng case FAIL (H12, A04, A10, A12) thay vì đoán chung chung. Khó khăn khác: có một tiến trình UI khác của thành viên đang chạy sẵn ở cổng 8765 trong lúc làm việc — xử lý bằng cách mở server test riêng ở cổng 8766 để không làm gián đoạn phiên của người khác.
-- Điều đã học: Case-level `case_accuracy` không phản ánh hết chất lượng sửa lỗi — H12 giữ nguyên 0.9333 từ v0 sang v1 nhưng hành vi thực tế đổi hẳn từ "tạo ticket không hỏi" sang "hỏi nhưng sai `response_type`"; phải đọc `actual_tool_calls`/`tool_results` từng case mới thấy được tiến bộ thật. Cũng học được rằng một guardrail ở tầng tool (`restricted_internal_identifier` trong `search_device_info`) không thay được việc dạy agent tự kiểm tra trước khi gọi tool — hai lớp phòng thủ khác vai trò nhau.
-- AI/công cụ đã dùng và cách kiểm tra: Dùng Claude Code (Claude Sonnet 5) để phân tích các run JSON, viết giả thuyết v2/v3, sửa `system_prompt.md`/`tools.yaml`, và chạy `run_eval.py` thật qua provider `anthropic`. Kiểm tra bằng cách: (1) so sánh `prompt_hash`/`tools_hash` giữa các run để xác nhận artifact thực sự đổi; (2) đối chiếu danh sách case FAIL trước/sau để phát hiện regression; (3) đọc trực tiếp `tool_results` và thư mục `tickets/` để xác nhận hành vi an toàn thực tế (không chỉ tin nhãn PASS/FAIL); (4) chạy UI thật qua `/api/chat` (không phải mock) để lấy transcript cho 4 kịch bản bắt buộc.
-- Thời điểm đã tự nộp URL repo chung trên VLearn: (điền sau khi nộp)
+- Phần việc và file/commit/PR:
+- Quyết định, khó khăn và cách xử lý:
+- Điều đã học:
+- AI/công cụ đã dùng và cách kiểm tra:
+- Thời điểm đã tự nộp URL repo chung trên VLearn:
 
 ### Nguyễn Hữu Thành — 2A202602813
 
