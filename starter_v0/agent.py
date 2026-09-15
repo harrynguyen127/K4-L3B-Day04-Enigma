@@ -12,6 +12,7 @@ class AgentRun:
     text: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_results: list[dict[str, Any]] = field(default_factory=list)
+    raw: Any | None = None
 
 
 class HelpdeskAgent:
@@ -48,4 +49,4 @@ class HelpdeskAgent:
             except Exception as exc:  # keep eval robust; failures are evidence
                 result = {"error": type(exc).__name__, "message": str(exc)}
             results.append({"tool": call.name, "args": call.args, "result": result})
-        return AgentRun(text=response.text, tool_calls=response.tool_calls, tool_results=results)
+        return AgentRun(text=response.text, tool_calls=response.tool_calls, tool_results=results, raw=response.raw)

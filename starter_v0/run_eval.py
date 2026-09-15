@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import time
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from typing import Any
 from agent import HelpdeskAgent
 from env_loader import load_lab_env
 from providers import make_provider
+from providers.ollama_plan_provider import OllamaPlanProvider
 from tools import TOOL_FUNCTIONS, load_tool_declarations, to_openai_tools
 from versioning import artifact_version_dict, build_artifact_version
 
@@ -267,22 +269,37 @@ def main() -> None:
     parser.add_argument("--version", required=True)
     parser.add_argument(
         "--provider",
-        choices=["openai", "openrouter", "anthropic", "gemini", "ollama", "local"],
+        choices=["openai", "openrouter", "anthropic", "gemini", "ollama", "ollama_router", "local"],
         required=True,
     )
     parser.add_argument("--model", default=None)
-    parser.add_argument("--system-prompt", type=Path, default=ARTIFACTS_DIR / "system_prompt.md")
+    parser.add_argument("--pipeline", choices=["native", "planned"], default=None, help="Defaults to planned for Ollama, native for other providers.")
+    parser.add_argument("--system-prompt", type=Path, default=None)
+    parser.add_argument("--router-prompt", type=Path, default=ARTIFACTS_DIR / "ollama_router_prompt.md")
     parser.add_argument("--tools", type=Path, default=ARTIFACTS_DIR / "tools.yaml")
     parser.add_argument("--eval-cases", type=Path, default=DATA_DIR / "eval_base.json")
     parser.add_argument("--runs-dir", type=Path, default=ROOT / "runs")
     parser.add_argument("--batch-size", type=int, default=2, help="Number of cases per batch before pausing")
     parser.add_argument("--batch-delay", type=int, default=90, help="Pause duration in seconds between batches")
     parser.add_argument("--retry-run-file", type=Path, default=None, help="Path to an existing run JSON to retry only provider_error cases")
+    parser.add_argument("--requests-per-minute", type=float, default=None, help="Throttle model requests. Defaults to unlimited for Ollama, 5/min for API providers. Use 0 to disable.")
     args = parser.parse_args()
+
+    pipeline = args.pipeline or ("planned" if args.provider == "ollama" else "native")
+    if pipeline == "planned" and args.provider != "ollama":
+        parser.error("--pipeline planned requires --provider ollama")
+    if pipeline == "planned" and not args.model:
+        parser.error("Ollama planned pipeline requires --model, for example qwen2.5:3b")
+    if args.system_prompt is None:
+        args.system_prompt = ARTIFACTS_DIR / ("ollama_planner_prompt.md" if pipeline == "planned" else "system_prompt.md")
 
     system_prompt = args.system_prompt.read_text(encoding="utf-8")
     artifact_version = build_artifact_version(args.version, args.system_prompt, args.tools)
     provider = make_provider(args.provider)
+    router_prompt = None
+    if pipeline == "planned":
+        router_prompt = args.router_prompt.read_text(encoding="utf-8")
+        provider = OllamaPlanProvider(router_prompt)
     selected_model = args.model or getattr(provider, "default_model", None)
     dataset_info = load_dataset_info(args.eval_cases)
     cases = load_cases(args.eval_cases, args.phase)
@@ -308,21 +325,35 @@ def main() -> None:
     openai_tools = to_openai_tools(tool_declarations)
 
     results: list[dict[str, Any]] = []
+    requests_per_minute = args.requests_per_minute
+    if requests_per_minute is None:
+        requests_per_minute = 0.0 if args.provider in {"ollama", "ollama_router", "local"} else 5.0
+    min_request_interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0.0
+    last_request_started: float | None = None
     for idx, case in enumerate(cases):
         if idx > 0 and args.batch_size > 0 and idx % args.batch_size == 0:
             print(f"\n[Rate-Limit Protection] Waiting {args.batch_delay}s after running {idx} cases...\n", flush=True)
             time.sleep(args.batch_delay)
+        if last_request_started is not None and min_request_interval > 0:
+            elapsed = time.monotonic() - last_request_started
+            delay = min_request_interval - elapsed
+            if delay > 0:
+                time.sleep(delay)
         print(f"Running {case['id']}...", flush=True)
         agent = HelpdeskAgent(provider, system_prompt=system_prompt, tools=openai_tools, model=args.model)
         try:
-            tool_choice = None if case["expect"].get("no_tool") else "required"
-            run = agent.run(case_messages(case), tool_choice=tool_choice)
+            tool_choice = None if pipeline == "planned" or case["expect"].get("no_tool") else "required"
+            last_request_started = time.monotonic()
+            messages = (case.get("turns") or case_messages(case)) if pipeline == "planned" else case_messages(case)
+            run = agent.run(messages, tool_choice=tool_choice)
             calls = [{"name": call.name, "args": call.args} for call in run.tool_calls]
             result = evaluate_phase_b(case, calls, run.text)
             tool_results = run.tool_results
+            pipeline_trace = run.raw if pipeline == "planned" else None
         except Exception as exc:
             calls = []
             tool_results = []
+            pipeline_trace = None
             result = {
                 "passed": False,
                 "failure_type": "provider_error",
@@ -345,6 +376,7 @@ def main() -> None:
             "expect": case["expect"],
             "result": result,
             "tool_results": tool_results,
+            "pipeline_trace": pipeline_trace,
         })
 
     if previous_run_data and existing_results_map:
@@ -373,6 +405,10 @@ def main() -> None:
         "phase": args.phase,
         "suite": args.suite,
         "provider": args.provider,
+        "pipeline": pipeline,
+        "router_prompt": str(args.router_prompt) if router_prompt is not None else None,
+        "router_prompt_sha256": hashlib.sha256(router_prompt.encode("utf-8")).hexdigest() if router_prompt is not None else None,
+        "artifact_snapshot": {"system_prompt": system_prompt, "router_prompt": router_prompt, "tool_declarations": tool_declarations},
         "model": selected_model,
         "system_prompt": str(args.system_prompt),
         "tools": str(args.tools),

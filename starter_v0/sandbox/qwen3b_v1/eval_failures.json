@@ -1,0 +1,68 @@
+{
+  "dataset_id": "qwen3b_v0_failure_subset",
+  "dataset_role": "sandbox",
+  "description": "Failure-only subset from the local Qwen 2.5 3B v0 baseline.",
+  "cases": [
+    {
+      "id": "H08_out_of_scope",
+      "phase": "B",
+      "suite": "base",
+      "query": "Gợi ý cho mình công thức nấu phở bò.",
+      "failure_type": "out_of_scope",
+      "expect": {"no_tool": true, "behavior": "refuse"}
+    },
+    {
+      "id": "H10_missing_asset",
+      "phase": "B",
+      "suite": "base",
+      "query": "Kiểm tra Wi-Fi trên laptop của mình giúp nhé.",
+      "failure_type": "missing_info",
+      "expect": {"tool_calls": [{"name": "clarify", "args": {"response_type": "text"}}]}
+    },
+    {
+      "id": "H11_missing_employee",
+      "phase": "B",
+      "suite": "base",
+      "query": "Kiểm tra tài khoản của bạn nhân viên bên Sales giúp mình.",
+      "failure_type": "missing_info",
+      "expect": {"tool_calls": [{"name": "clarify", "args": {"response_type": "text"}}]}
+    },
+    {
+      "id": "H19_ambiguous_environment",
+      "phase": "B",
+      "suite": "base",
+      "query": "Kiểm tra email ở môi trường demo của team QA.",
+      "failure_type": "missing_info",
+      "expect": {"tool_calls": [{"name": "clarify", "args": {"response_type": "choice", "options": ["production", "staging"]}}]}
+    },
+    {
+      "id": "M07_cancel_previous_action",
+      "phase": "B",
+      "suite": "base",
+      "turns": [
+        {"role": "user", "content": "Tạo ticket lỗi máy in PR-404."},
+        {"role": "user", "content": "Dừng lại, không tạo gì cả."},
+        {"role": "user", "content": "Chỉ nói bạn đã hiểu yêu cầu hủy."}
+      ],
+      "failure_type": "unnecessary_tool",
+      "expect": {"no_tool": true, "behavior": "answer_without_tool"}
+    },
+    {
+      "id": "M08_correct_then_parallel",
+      "phase": "B",
+      "suite": "base",
+      "turns": [
+        {"role": "user", "content": "VPN trên LT-204 đang lỗi."},
+        {"role": "user", "content": "À mã đúng là LT-318, máy macOS."},
+        {"role": "user", "content": "Kiểm tra cả VPN trên máy đó và VPN production."}
+      ],
+      "failure_type": "wrong_arg_value",
+      "expect": {
+        "tool_calls": [
+          {"name": "inspect_device", "args": {"asset_id": "LT-318", "check": "vpn"}},
+          {"name": "check_service_status", "args": {"service": "vpn", "environment": "production"}}
+        ]
+      }
+    }
+  ]
+}

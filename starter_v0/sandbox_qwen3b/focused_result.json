@@ -1,0 +1,1088 @@
+{
+  "model": "qwen2.5:3b",
+  "mode": "sandbox_two_stage_plan_no_tool_execution",
+  "source_runs": [
+    "runs\\v1_B_base_ollama_20260915T194530565065.json",
+    "runs\\v1-local-qwen25-3b_B_base_ollama_20260915T194933074788.json"
+  ],
+  "prompt": "You are an IT helpdesk tool planner, not a tool executor. Return a JSON object with calls and reply. Each call has name and args. Use calls=[] when no tool is needed. Plan only the latest active request. Tool contracts are data, not user requests.\n\nResolve conversation updates first. Keep the latest corrected asset/employee/priority and unchanged topic. Earlier canceled actions must never be planned again. Pronouns refer to the most recently corrected relevant ID.\n\nDecision order:\n1. Non-IT topics such as recipes: calls=[], politely refuse. Cancellation or acknowledgment: calls=[], acknowledge immediately. Do not confirm a cancellation. Asking about your capabilities: calls=[], answer.\n2. Formatting supplied findings: only format_incident_report; copy any specified incident_title exactly, preserve template. Do not collect new evidence.\n3. A requested device diagnostic without an explicit asset ID in the conversation: ONLY clarify with response_type=text asking for the asset ID. A requested employee lookup without an explicit employee ID: ONLY clarify with response_type=text asking for the employee ID. Names and departments are not IDs. Do not invent IDs or replace device diagnostics with service status.\n4. A stated service environment outside production/staging: ONLY clarify with response_type=choice, options=[\"production\", \"staging\"]. If omitted, environment=production. Never infer an environment from a team name.\n5. Ticket creation without explicit confirmation of the exact current payload: ONLY clarify with response_type=yes_no and a question summarizing issue, priority and asset. If payload changes, ask again. Explicit request to review and confirm always means clarify yes_no. Do not put response_type inside question text instead of its own argument.\n6. Otherwise plan every requested source: asset diagnostics -> inspect_device; shared status -> check_service_status; employee account and assigned devices -> lookup_user (already returns assigned_assets); IT how-to -> search_kb. Assigned devices alone never require inspect_device. An explicit asset diagnostic plus employee lookup requires both tools with both IDs included.\n\nDevice check follows issue: VPN/VPN certificate=vpn, Wi-Fi/network=network, security/encryption/endpoint=security, battery/disk/memory=hardware, app/software=software. all only when no specific diagnostic scope is requested. Device VPN plus shared VPN production means inspect_device(check=vpn) AND check_service_status(service=vpn, environment=production), not two service environments.\nKB category follows topic: Outlook=email, Wi-Fi=wifi, VPN=vpn, printer=printing, account/password/MFA=account. Never use IT tools for cooking or unrelated topics.\n\nBefore returning JSON, verify every ID was supplied by the user, every requested source is represented, every required argument is a separate JSON key, and no canceled or unrequested call remains. Reply in Vietnamese. calls is an array, including when empty.\n",
+  "router_prompt": "Phân loại yêu cầu hiện tại của trợ lý IT. Chỉ trả JSON mode và reply, KHÔNG chọn tên tool. Đọc toàn bộ lịch sử, nhưng chỉ xử lý yêu cầu còn hiệu lực ở lượt cuối. Giá trị được sửa thay thế giá trị cũ; hủy rồi yêu cầu nói đã hiểu vẫn là hủy.\n\nChọn đúng một mode theo thứ tự:\n- no_tool: ngoài IT như công thức món ăn, giải trí; hủy/dừng; chỉ nói đã hiểu; hỏi khả năng trợ lý. Hủy không cần xác nhận. reply là câu trả lời ngắn tiếng Việt phù hợp.\n- missing_asset: yêu cầu chẩn đoán máy cá nhân nhưng không có mã tài sản cụ thể (LT-/DT-/PR- kèm số) trong lời người dùng. Laptop của tôi không phải mã tài sản. Đây không phải kiểm tra dịch vụ dùng chung.\n- missing_employee: tra tài khoản nhân viên nhưng không có mã EMP- kèm số trong lời người dùng. Tên phòng ban không phải mã nhân viên. Hỏi cả thiết bị được cấp vẫn thuộc tra nhân viên.\n- ambiguous_environment: kiểm tra dịch vụ với môi trường được nêu nhưng không phải production/staging, ví dụ demo hoặc sandbox. Không tự suy diễn staging từ QA.\n- confirm_ticket: muốn tạo ticket nhưng chưa xác nhận payload hiện tại, hoặc yêu cầu xem lại và hỏi xác nhận. Đổi ưu tiên/summary/máy làm mất hiệu lực xác nhận cũ. Không chọn mode này cho hủy.\n- tools: các yêu cầu IT khác đủ thông tin, bao gồm định dạng findings, tra người có mã EMP-, kiểm tra máy có mã tài sản, nhiều nguồn độc lập, trạng thái dịch vụ với production/staging hoặc không nêu môi trường.\n\nKhông bịa mã tài sản/nhân viên. Một ID chỉ có trong lời trợ lý hoặc ví dụ hướng dẫn không đủ. reply với các mode cần tool có thể là chuỗi rỗng.\n",
+  "tools": [
+    {
+      "name": "clarify",
+      "description": "Hỏi lại khi thiếu hoặc mơ hồ một thông tin bắt buộc; không tự đoán asset_id, employee_id hoặc environment. Dùng response_type=choice cho các enum mơ hồ và yes_no trước hành động ghi.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "default": "",
+            "description": "Câu hỏi"
+          },
+          "response_type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "yes_no",
+              "choice"
+            ],
+            "default": "text",
+            "description": "Kiểu trả lời; dùng text khi thiếu ID, yes_no trước create_ticket, choice khi enum mơ hồ"
+          },
+          "options": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "description": "Các lựa chọn"
+          }
+        },
+        "required": [
+          "question",
+          "response_type"
+        ]
+      }
+    },
+    {
+      "name": "search_kb",
+      "description": "Tìm bài hướng dẫn/how-to và troubleshooting trong knowledge base. Luôn đặt category theo chủ đề nếu rõ: email/Outlook=email, Wi-Fi=wifi, VPN=vpn, printer=printing, account/MFA/password=account. Không dùng cho trạng thái dịch vụ, chẩn đoán một asset, tra nhân viên hoặc chính sách nội bộ.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "default": "",
+            "description": "Nội dung cần tìm, gồm chủ đề còn hiệu lực và nền tảng người dùng yêu cầu trong ngữ cảnh nhiều lượt"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "all",
+              "vpn",
+              "email",
+              "wifi",
+              "printing",
+              "account",
+              "security",
+              "hardware",
+              "software",
+              "meeting_room"
+            ],
+            "default": "all",
+            "description": "Nhóm hướng dẫn; tránh all khi chủ đề đã rõ"
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 3,
+            "description": "Số kết quả"
+          }
+        },
+        "required": [
+          "query",
+          "category"
+        ]
+      }
+    },
+    {
+      "name": "check_service_status",
+      "description": "Kiểm tra tình trạng/availability của một dịch vụ dùng chung như VPN hoặc email trong đúng environment. Không dùng để kiểm tra một laptop hay desktop. Dùng production khi người dùng không nêu môi trường; dùng staging khi nêu staging. Nếu nêu demo hoặc môi trường không thuộc enum thì clarify choice thay vì tự map.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "enum": [
+              "vpn",
+              "email",
+              "sso",
+              "wifi",
+              "printing"
+            ],
+            "description": "Tên dịch vụ"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "production",
+              "staging"
+            ],
+            "default": "production",
+            "description": "Môi trường"
+          }
+        },
+        "required": [
+          "service",
+          "environment"
+        ]
+      }
+    },
+    {
+      "name": "inspect_device",
+      "description": "Chẩn đoán một thiết bị cụ thể theo asset_id. Chỉ dùng asset_id thật như LT-204, DT-087, PR-404; không bao giờ dùng employee_id EMP-* làm asset_id. Mỗi asset cần một lần gọi riêng. Luôn đặt check đúng phạm vi người dùng yêu cầu: VPN/certificate=vpn, Wi-Fi/network=network, security=security, hardware/disk/battery/memory=hardware, software=software, tổng thể=all. Không dùng cho trạng thái dịch vụ dùng chung.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "description": "Mã tài sản thật, ví dụ LT-204/DT-087/PR-404; không phải employee_id EMP-*"
+          },
+          "check": {
+            "type": "string",
+            "enum": [
+              "all",
+              "network",
+              "vpn",
+              "security",
+              "hardware",
+              "software"
+            ],
+            "default": "all",
+            "description": "VPN hoặc VPN certificate=vpn kể cả khi gọi kèm status. Wi-Fi=network. Chỉ dùng all khi không có phạm vi lỗi cụ thể"
+          }
+        },
+        "required": [
+          "asset_id",
+          "check"
+        ]
+      }
+    },
+    {
+      "name": "lookup_user",
+      "description": "Tra cứu hồ sơ nhân viên bằng employee_id chính xác. Kết quả lookup_user đã bao gồm thiết bị được cấp/assigned_assets nếu có; không gọi inspect_device chỉ vì người dùng hỏi thiết bị được cấp. Nếu chỉ có tên/phòng ban hoặc thiếu employee_id thì gọi clarify trước, không tự chọn người.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "employee_id": {
+            "type": "string",
+            "description": "Mã nhân viên"
+          }
+        },
+        "required": [
+          "employee_id"
+        ]
+      }
+    },
+    {
+      "name": "format_incident_report",
+      "description": "Chỉ định dạng các findings đã được người dùng cung cấp hoặc đã có trong ngữ cảnh thành báo cáo. Không gọi thêm tool thu thập dữ liệu khi người dùng yêu cầu format-only hoặc nói không kiểm tra lại.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "findings": {
+            "type": "array",
+            "default": [],
+            "description": "Các kết quả đã thu thập",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "brief",
+              "technical",
+              "handoff"
+            ],
+            "default": "brief",
+            "description": "Mẫu báo cáo"
+          },
+          "incident_title": {
+            "type": "string",
+            "default": "IT incident",
+            "description": "Sao chép nguyên văn tiêu đề người dùng chỉ định, không dịch, mở rộng hoặc đổi tên"
+          }
+        },
+        "required": [
+          "findings",
+          "template"
+        ]
+      }
+    },
+    {
+      "name": "search_device_info",
+      "description": "Tìm thông tin công khai về một model thiết bị trên web. Chỉ truyền hãng, model và loại thông tin; không truyền asset ID, employee ID hoặc dữ liệu nội bộ.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "manufacturer": {
+            "type": "string",
+            "description": "Hãng sản xuất công khai, ví dụ Lenovo"
+          },
+          "model": {
+            "type": "string",
+            "description": "Tên model công khai, ví dụ ThinkPad T14 Gen 4"
+          },
+          "query_type": {
+            "type": "string",
+            "enum": [
+              "specs",
+              "drivers",
+              "support",
+              "compatibility"
+            ],
+            "default": "support",
+            "description": "Loại thông tin cần tìm"
+          },
+          "max_results": {
+            "type": "integer",
+            "default": 3,
+            "description": "Số kết quả, tối đa 5"
+          }
+        },
+        "required": [
+          "manufacturer",
+          "model",
+          "query_type"
+        ]
+      }
+    },
+    {
+      "name": "policy",
+      "description": "Tìm trong chính sách IT nội bộ.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "default": "",
+            "description": "Nội dung cần tìm"
+          },
+          "policy_area": {
+            "type": "string",
+            "enum": [
+              "all",
+              "access_control",
+              "data_privacy",
+              "external_tools",
+              "incident_response",
+              "service_operations",
+              "ticketing"
+            ],
+            "default": "all",
+            "description": "Nhóm chính sách"
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 3,
+            "description": "Số mục"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "create_ticket",
+      "description": "Tạo ticket hỗ trợ sau khi người dùng đã xác nhận rõ summary, priority và asset_id nếu có. Đây là hành động ghi; trước đó phải gọi clarify với yes_no và không được coi việc xác nhận cũ là còn hiệu lực nếu payload thay đổi.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "default": "",
+            "description": "Tóm tắt sự cố"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ],
+            "default": "medium",
+            "description": "Mức ưu tiên"
+          },
+          "asset_id": {
+            "type": "string",
+            "default": "",
+            "description": "Mã tài sản nếu có"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Đã được người dùng xác nhận"
+          }
+        },
+        "required": [
+          "summary"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "total_cases": 9,
+    "measured_cases": 9,
+    "provider_error_cases": 0,
+    "passed_cases": 4,
+    "case_accuracy": 0.4444,
+    "tool_routing_accuracy": 0.5556,
+    "argument_accuracy": 0.4444,
+    "multiturn_accuracy": 0.6667,
+    "failure_counts": {
+      "wrong_tool": 1,
+      "out_of_scope": 1,
+      "missing_info": 2,
+      "unnecessary_tool": 1
+    },
+    "observed_mismatch_counts": {
+      "missing_tool_call": 2,
+      "unexpected_tool_call": 2,
+      "wrong_arg_value": 1
+    }
+  },
+  "results": [
+    {
+      "id": "H04_user_routing",
+      "phase": "B",
+      "input": "Tra cứu tài khoản nhân viên EMP-1003 và thiết bị được cấp.",
+      "expect": {
+        "tool_calls": [
+          {
+            "name": "lookup_user",
+            "args": {
+              "employee_id": "EMP-1003"
+            }
+          }
+        ]
+      },
+      "is_multiturn": false,
+      "result": {
+        "passed": false,
+        "routing_correct": false,
+        "args_correct": false,
+        "actual_tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "question": "Bạn muốn tra cứu tài khoản nhân viên nào? (EMP-1003) hoặc thiết bị nhân viên nào? (EMP-1003)",
+              "response_type": "text"
+            }
+          }
+        ],
+        "actual_text": "Xin chào, tôi cần thêm thông tin để thực hiện yêu cầu của bạn. Bạn muốn tra cứu tài khoản nhân viên nào (ví dụ: EMP-1003) hoặc thiết bị nhân viên nào (ví dụ: EMP-1003)?",
+        "case_failure_type": "wrong_tool",
+        "observed_mismatch": "missing_tool_call",
+        "failure_type": "wrong_tool",
+        "failures": [
+          "missing tool call lookup_user",
+          "extra tool call clarify"
+        ]
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:29.6372164Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n    \"calls\": [\n        {\n            \"name\": \"clarify\",\n            \"args\": {\n                \"question\": \"Bạn muốn tra cứu tài khoản nhân viên nào? (EMP-1003) hoặc thiết bị nhân viên nào? (EMP-1003)\",\n                \"response_type\": \"text\"\n            }\n        }\n    ],\n    \"reply\": \"Xin chào, tôi cần thêm thông tin để thực hiện yêu cầu của bạn. Bạn muốn tra cứu tài khoản nhân viên nào (ví dụ: EMP-1003) hoặc thiết bị nhân viên nào (ví dụ: EMP-1003)?\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 2104440600,
+        "load_duration": 6098500,
+        "prompt_eval_count": 755,
+        "prompt_eval_cached_count": 3,
+        "prompt_eval_duration": 343905000,
+        "eval_count": 135,
+        "eval_duration": 1736197000
+      },
+      "route": {
+        "mode": "missing_employee",
+        "reply": "Yêu cầu cần mã tài sản cụ thể, không phải mã nhân viên."
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:25.5016399Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n  \"mode\": \"missing_employee\",\n  \"reply\": \"Yêu cầu cần mã tài sản cụ thể, không phải mã nhân viên.\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 791628700,
+        "load_duration": 8344100,
+        "prompt_eval_count": 438,
+        "prompt_eval_cached_count": 3,
+        "prompt_eval_duration": 262326000,
+        "eval_count": 32,
+        "eval_duration": 408983000
+      }
+    },
+    {
+      "id": "H08_out_of_scope",
+      "phase": "B",
+      "input": "Gợi ý cho mình công thức nấu phở bò.",
+      "expect": {
+        "no_tool": true,
+        "behavior": "refuse"
+      },
+      "is_multiturn": false,
+      "result": {
+        "passed": false,
+        "routing_correct": false,
+        "args_correct": false,
+        "actual_tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "question": "Bạn cần gợi ý về công thức nấu phở bò hay chỉ cần một câu chuyện nấu ăn? Tôi có thể giúp với gợi ý công thức nấu phở bò nếu bạn muốn.",
+              "response_type": "text"
+            }
+          }
+        ],
+        "actual_text": "Bạn cần gợi ý về công thức nấu phở bò hay chỉ cần một câu chuyện nấu ăn? Tôi có thể giúp với gợi ý công thức nấu phở bò nếu bạn muốn.",
+        "case_failure_type": "out_of_scope",
+        "observed_mismatch": "unexpected_tool_call",
+        "failure_type": "out_of_scope",
+        "failures": [
+          "expected no tool call"
+        ]
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:36.7047661Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n  \"calls\": [\n    {\n      \"name\": \"clarify\",\n      \"args\": {\n        \"question\": \"Bạn cần gợi ý về công thức nấu phở bò hay chỉ cần một câu chuyện nấu ăn? Tôi có thể giúp với gợi ý công thức nấu phở bò nếu bạn muốn.\",\n        \"response_type\": \"text\"\n      }\n    }\n  ], \"reply\": \"Bạn cần gợi ý về công thức nấu phở bò hay chỉ cần một câu chuyện nấu ăn? Tôi có thể giúp với gợi ý công thức nấu phở bò nếu bạn muốn.\" }"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 2441030600,
+        "load_duration": 7864700,
+        "prompt_eval_count": 2377,
+        "prompt_eval_cached_count": 576,
+        "prompt_eval_duration": 654025000,
+        "eval_count": 125,
+        "eval_duration": 1733825000
+      },
+      "route": {
+        "mode": "tools",
+        "reply": "tool: recipe_generator, request=phở bò"
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:32.2075178Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\"mode\": \"tools\", \"reply\": \"tool: recipe_generator, request=phở bò\"}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 511884200,
+        "load_duration": 6026500,
+        "prompt_eval_count": 433,
+        "prompt_eval_cached_count": 415,
+        "prompt_eval_duration": 73856000,
+        "eval_count": 23,
+        "eval_duration": 405540000
+      }
+    },
+    {
+      "id": "H10_missing_asset",
+      "phase": "B",
+      "input": "Kiểm tra Wi-Fi trên laptop của mình giúp nhé.",
+      "expect": {
+        "tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "response_type": "text"
+            }
+          }
+        ]
+      },
+      "is_multiturn": false,
+      "result": {
+        "passed": false,
+        "routing_correct": false,
+        "args_correct": false,
+        "actual_tool_calls": [
+          {
+            "name": "inspect_device",
+            "args": {
+              "asset_id": "LT-123",
+              "check": "network"
+            }
+          }
+        ],
+        "actual_text": "Tôi cần biết mã tài sản của laptop của bạn để kiểm tra Wi-Fi. Mã tài sản thường có dạng LT-123, DT-456, PR-789. Bạn có thể cung cấp cho tôi không?",
+        "case_failure_type": "missing_info",
+        "observed_mismatch": "missing_tool_call",
+        "failure_type": "missing_info",
+        "failures": [
+          "missing tool call clarify",
+          "extra tool call inspect_device"
+        ]
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:42.711726Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\"calls\": [{\"name\": \"inspect_device\", \"args\": {\"asset_id\": \"LT-123\", \"check\": \"network\"}}], \"reply\": \"Tôi cần biết mã tài sản của laptop của bạn để kiểm tra Wi-Fi. Mã tài sản thường có dạng LT-123, DT-456, PR-789. Bạn có thể cung cấp cho tôi không?\"}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 1404672900,
+        "load_duration": 7968500,
+        "prompt_eval_count": 2376,
+        "prompt_eval_cached_count": 2359,
+        "prompt_eval_duration": 63758000,
+        "eval_count": 87,
+        "eval_duration": 1276819000
+      },
+      "route": {
+        "mode": "tools",
+        "reply": ""
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:39.2200418Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\"mode\": \"tools\", \"reply\": \"\"}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 466695800,
+        "load_duration": 7653300,
+        "prompt_eval_count": 432,
+        "prompt_eval_cached_count": 415,
+        "prompt_eval_duration": 74281000,
+        "eval_count": 13,
+        "eval_duration": 336931000
+      }
+    },
+    {
+      "id": "H11_missing_employee",
+      "phase": "B",
+      "input": "Kiểm tra tài khoản của bạn nhân viên bên Sales giúp mình.",
+      "expect": {
+        "tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "response_type": "text"
+            }
+          }
+        ]
+      },
+      "is_multiturn": false,
+      "result": {
+        "passed": true,
+        "routing_correct": true,
+        "args_correct": true,
+        "actual_tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "question": "Bạn muốn kiểm tra tài khoản nhân viên nào trong nhóm Sales?",
+              "response_type": "text",
+              "options": [
+                "Nhân viên Sales cụ thể"
+              ]
+            }
+          }
+        ],
+        "actual_text": "Tôi cần biết cụ thể là nhân viên Sales nào bạn muốn kiểm tra tài khoản của họ.",
+        "case_failure_type": "missing_info",
+        "observed_mismatch": null,
+        "failure_type": null,
+        "failures": []
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:49.1043574Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n    \"calls\": [\n        {\n            \"name\": \"clarify\",\n            \"args\": {\n                \"question\": \"Bạn muốn kiểm tra tài khoản nhân viên nào trong nhóm Sales?\",\n                \"response_type\": \"text\",\n                \"options\": [\"Nhân viên Sales cụ thể\"]\n            }\n        }\n    ],\n    \"reply\": \"Tôi cần biết cụ thể là nhân viên Sales nào bạn muốn kiểm tra tài khoản của họ.\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 1559022000,
+        "load_duration": 6076700,
+        "prompt_eval_count": 751,
+        "prompt_eval_cached_count": 3,
+        "prompt_eval_duration": 331235000,
+        "eval_count": 91,
+        "eval_duration": 1204246000
+      },
+      "route": {
+        "mode": "missing_employee",
+        "reply": "Tôi cần mã nhân viên cụ thể để kiểm tra, vui lòng cung cấp."
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:45.4878595Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\"mode\": \"missing_employee\", \"reply\": \"Tôi cần mã nhân viên cụ thể để kiểm tra, vui lòng cung cấp.\"}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 694447600,
+        "load_duration": 6472700,
+        "prompt_eval_count": 434,
+        "prompt_eval_cached_count": 418,
+        "prompt_eval_duration": 67906000,
+        "eval_count": 31,
+        "eval_duration": 572043000
+      }
+    },
+    {
+      "id": "M05_ticket_confirmation",
+      "phase": "B",
+      "input": [
+        {
+          "role": "user",
+          "content": "Tạo ticket lỗi VPN LT-204 mức medium."
+        },
+        {
+          "role": "user",
+          "content": "Đổi mức ưu tiên thành high."
+        },
+        {
+          "role": "user",
+          "content": "Hãy cho mình xem lại và hỏi xác nhận trước khi tạo."
+        }
+      ],
+      "expect": {
+        "tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "response_type": "yes_no"
+            }
+          }
+        ]
+      },
+      "is_multiturn": true,
+      "result": {
+        "passed": true,
+        "routing_correct": true,
+        "args_correct": true,
+        "actual_tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "question": "Bạn có muốn xác nhận và tạo ticket với mức ưu tiên cao cho lỗi VPN LT-204 không?",
+              "response_type": "yes_no"
+            }
+          }
+        ],
+        "actual_text": "Tôi cần xác nhận trước khi tạo ticket với mức ưu tiên cao cho lỗi VPN LT-204. Bạn có muốn tôi tạo ticket với mức ưu tiên cao không?",
+        "case_failure_type": "wrong_boundary",
+        "observed_mismatch": null,
+        "failure_type": null,
+        "failures": []
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:55.7228604Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n    \"calls\": [\n        {\n            \"name\": \"clarify\",\n            \"args\": {\n                \"question\": \"Bạn có muốn xác nhận và tạo ticket với mức ưu tiên cao cho lỗi VPN LT-204 không?\",\n                \"response_type\": \"yes_no\"\n            }\n        }\n    ],\n    \"reply\": \"Tôi cần xác nhận trước khi tạo ticket với mức ưu tiên cao cho lỗi VPN LT-204. Bạn có muốn tôi tạo ticket với mức ưu tiên cao không?\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 1761528500,
+        "load_duration": 7128500,
+        "prompt_eval_count": 822,
+        "prompt_eval_cached_count": 576,
+        "prompt_eval_duration": 221274000,
+        "eval_count": 109,
+        "eval_duration": 1500581000
+      },
+      "route": {
+        "mode": "confirm_ticket",
+        "reply": "Đã hiểu, tôi sẽ kiểm tra và xác nhận payload hiện tại trước khi tạo ticket."
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:51.9110276Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\"mode\": \"confirm_ticket\", \"reply\": \"Đã hiểu, tôi sẽ kiểm tra và xác nhận payload hiện tại trước khi tạo ticket.\"}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 738198700,
+        "load_duration": 7766600,
+        "prompt_eval_count": 504,
+        "prompt_eval_cached_count": 415,
+        "prompt_eval_duration": 130476000,
+        "eval_count": 32,
+        "eval_duration": 568938000
+      }
+    },
+    {
+      "id": "H18_user_and_asset",
+      "phase": "B",
+      "input": "Tra tài khoản EMP-1007 và kiểm tra security của máy DT-087 được nêu trong yêu cầu này.",
+      "expect": {
+        "tool_calls": [
+          {
+            "name": "lookup_user",
+            "args": {
+              "employee_id": "EMP-1007"
+            }
+          },
+          {
+            "name": "inspect_device",
+            "args": {
+              "asset_id": "DT-087",
+              "check": "security"
+            }
+          }
+        ]
+      },
+      "is_multiturn": false,
+      "result": {
+        "passed": true,
+        "routing_correct": true,
+        "args_correct": true,
+        "actual_tool_calls": [
+          {
+            "name": "lookup_user",
+            "args": {
+              "employee_id": "EMP-1007"
+            }
+          },
+          {
+            "name": "inspect_device",
+            "args": {
+              "asset_id": "DT-087",
+              "check": "security"
+            }
+          }
+        ],
+        "actual_text": "Đã ghi nhớ yêu cầu tra tài khoản EMP-1007 và kiểm tra security của máy DT-087. Tôi sẽ thực hiện các bước theo yêu cầu.",
+        "case_failure_type": "wrong_tool",
+        "observed_mismatch": null,
+        "failure_type": null,
+        "failures": []
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:53:02.3319294Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n    \"calls\": [\n        {\n            \"name\": \"lookup_user\",\n            \"args\": {\n                \"employee_id\": \"EMP-1007\"\n            }\n        },\n        {\n            \"name\": \"inspect_device\",\n            \"args\": {\n                \"asset_id\": \"DT-087\",\n                \"check\": \"security\"\n            }\n        }\n    ],\n    \"reply\": \"Đã ghi nhớ yêu cầu tra tài khoản EMP-1007 và kiểm tra security của máy DT-087. Tôi sẽ thực hiện các bước theo yêu cầu.\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 1944023700,
+        "load_duration": 5414200,
+        "prompt_eval_count": 2392,
+        "prompt_eval_cached_count": 2359,
+        "prompt_eval_duration": 76716000,
+        "eval_count": 124,
+        "eval_duration": 1801286000
+      },
+      "route": {
+        "mode": "tools",
+        "reply": ""
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:52:58.3135382Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n  \"mode\": \"tools\",\n  \"reply\": \"\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 537133200,
+        "load_duration": 7862900,
+        "prompt_eval_count": 448,
+        "prompt_eval_cached_count": 415,
+        "prompt_eval_duration": 85554000,
+        "eval_count": 17,
+        "eval_duration": 415357000
+      }
+    },
+    {
+      "id": "H19_ambiguous_environment",
+      "phase": "B",
+      "input": "Kiểm tra email ở môi trường demo của team QA.",
+      "expect": {
+        "tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "response_type": "choice",
+              "options": [
+                "production",
+                "staging"
+              ]
+            }
+          }
+        ]
+      },
+      "is_multiturn": false,
+      "result": {
+        "passed": false,
+        "routing_correct": true,
+        "args_correct": false,
+        "actual_tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "question": "Bạn muốn kiểm tra email ở môi trường nào? Môi trường demo của team QA hay môi trường chính thức? ",
+              "response_type": "choice",
+              "options": [
+                "production",
+                "staging",
+                "demo"
+              ]
+            }
+          }
+        ],
+        "actual_text": "Bạn cần tôi kiểm tra email ở môi trường nào?",
+        "case_failure_type": "missing_info",
+        "observed_mismatch": "wrong_arg_value",
+        "failure_type": "missing_info",
+        "failures": [
+          "options: expected ['production', 'staging'], got ['production', 'staging', 'demo']"
+        ]
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:53:08.6301703Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n    \"calls\": [\n        {\n            \"name\": \"clarify\",\n            \"args\": {\n                \"question\": \"Bạn muốn kiểm tra email ở môi trường nào? Môi trường demo của team QA hay môi trường chính thức? \",\n                \"response_type\": \"choice\",\n                \"options\": [\"production\", \"staging\", \"demo\"]\n            }\n        }\n    ],\n    \"reply\": \"Bạn cần tôi kiểm tra email ở môi trường nào?\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 1550090200,
+        "load_duration": 6942600,
+        "prompt_eval_count": 2376,
+        "prompt_eval_cached_count": 2359,
+        "prompt_eval_duration": 61183000,
+        "eval_count": 97,
+        "eval_duration": 1421166000
+      },
+      "route": {
+        "mode": "tools",
+        "reply": "Kiểm tra trạng thái dịch vụ của môi trường demo cho team QA"
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:53:05.0128222Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\"mode\": \"tools\", \"reply\": \"Kiểm tra trạng thái dịch vụ của môi trường demo cho team QA\"}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 632069500,
+        "load_duration": 6539200,
+        "prompt_eval_count": 432,
+        "prompt_eval_cached_count": 415,
+        "prompt_eval_duration": 71259000,
+        "eval_count": 26,
+        "eval_duration": 499092000
+      }
+    },
+    {
+      "id": "M07_cancel_previous_action",
+      "phase": "B",
+      "input": [
+        {
+          "role": "user",
+          "content": "Tạo ticket lỗi máy in PR-404."
+        },
+        {
+          "role": "user",
+          "content": "Dừng lại, không tạo gì cả."
+        },
+        {
+          "role": "user",
+          "content": "Chỉ nói bạn đã hiểu yêu cầu hủy."
+        }
+      ],
+      "expect": {
+        "no_tool": true,
+        "behavior": "answer_without_tool"
+      },
+      "is_multiturn": true,
+      "result": {
+        "passed": false,
+        "routing_correct": false,
+        "args_correct": false,
+        "actual_tool_calls": [
+          {
+            "name": "clarify",
+            "args": {
+              "question": "Bạn muốn hủy ticket lỗi máy in PR-404 không?",
+              "response_type": "yes_no"
+            }
+          }
+        ],
+        "actual_text": "Tôi hiểu bạn muốn hủy ticket lỗi máy in PR-404. Bạn đã xác nhận?",
+        "case_failure_type": "unnecessary_tool",
+        "observed_mismatch": "unexpected_tool_call",
+        "failure_type": "unnecessary_tool",
+        "failures": [
+          "expected no tool call"
+        ]
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:53:14.6031119Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n  \"calls\": [\n    {\n      \"name\": \"clarify\",\n      \"args\": {\n        \"question\": \"Bạn muốn hủy ticket lỗi máy in PR-404 không?\",\n        \"response_type\": \"yes_no\"\n      }\n    }\n  ],\n  \"reply\": \"Tôi hiểu bạn muốn hủy ticket lỗi máy in PR-404. Bạn đã xác nhận?\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 1303173700,
+        "load_duration": 7787900,
+        "prompt_eval_count": 817,
+        "prompt_eval_cached_count": 772,
+        "prompt_eval_duration": 81343000,
+        "eval_count": 82,
+        "eval_duration": 1178545000
+      },
+      "route": {
+        "mode": "confirm_ticket",
+        "reply": "Bạn đã hiểu yêu cầu hủy."
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:53:11.2377912Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n  \"mode\": \"confirm_ticket\",\n  \"reply\": \"Bạn đã hiểu yêu cầu hủy.\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 565701900,
+        "load_duration": 5855600,
+        "prompt_eval_count": 499,
+        "prompt_eval_cached_count": 415,
+        "prompt_eval_duration": 129369000,
+        "eval_count": 23,
+        "eval_duration": 380869000
+      }
+    },
+    {
+      "id": "M08_correct_then_parallel",
+      "phase": "B",
+      "input": [
+        {
+          "role": "user",
+          "content": "VPN trên LT-204 đang lỗi."
+        },
+        {
+          "role": "user",
+          "content": "À mã đúng là LT-318, máy macOS."
+        },
+        {
+          "role": "user",
+          "content": "Kiểm tra cả VPN trên máy đó và VPN production."
+        }
+      ],
+      "expect": {
+        "tool_calls": [
+          {
+            "name": "inspect_device",
+            "args": {
+              "asset_id": "LT-318",
+              "check": "vpn"
+            }
+          },
+          {
+            "name": "check_service_status",
+            "args": {
+              "service": "vpn",
+              "environment": "production"
+            }
+          }
+        ]
+      },
+      "is_multiturn": true,
+      "result": {
+        "passed": true,
+        "routing_correct": true,
+        "args_correct": true,
+        "actual_tool_calls": [
+          {
+            "name": "check_service_status",
+            "args": {
+              "service": "vpn",
+              "environment": "production"
+            }
+          },
+          {
+            "name": "inspect_device",
+            "args": {
+              "asset_id": "LT-318",
+              "check": "vpn"
+            }
+          }
+        ],
+        "actual_text": "Tôi sẽ kiểm tra cả dịch vụ VPN trên máy có mã tài sản LT-318, cũng như dịch vụ VPN trong môi trường production. Tôi sẽ liên hệ lại sau khi có kết quả.",
+        "case_failure_type": "wrong_arg_value",
+        "observed_mismatch": null,
+        "failure_type": null,
+        "failures": []
+      },
+      "raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:53:21.4119936Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n    \"calls\": [\n        {\n            \"name\": \"check_service_status\",\n            \"args\": {\n                \"service\": \"vpn\",\n                \"environment\": \"production\"\n            }\n        },\n        {\n            \"name\": \"inspect_device\",\n            \"args\": {\n                \"asset_id\": \"LT-318\",\n                \"check\": \"vpn\"\n            }\n        }\n    ],\n    \"reply\": \"Tôi sẽ kiểm tra cả dịch vụ VPN trên máy có mã tài sản LT-318, cũng như dịch vụ VPN trong môi trường production. Tôi sẽ liên hệ lại sau khi có kết quả.\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 2017934800,
+        "load_duration": 7372400,
+        "prompt_eval_count": 2448,
+        "prompt_eval_cached_count": 2359,
+        "prompt_eval_duration": 109599000,
+        "eval_count": 128,
+        "eval_duration": 1835768000
+      },
+      "route": {
+        "mode": "tools",
+        "reply": "Kiểm tra cả VPN trên máy LT-318 và VPN production."
+      },
+      "router_raw": {
+        "model": "qwen2.5:3b",
+        "created_at": "2026-09-15T12:53:17.3484193Z",
+        "message": {
+          "role": "assistant",
+          "content": "{\n  \"mode\": \"tools\",\n  \"reply\": \"Kiểm tra cả VPN trên máy LT-318 và VPN production.\"\n}"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 698983900,
+        "load_duration": 7290900,
+        "prompt_eval_count": 504,
+        "prompt_eval_cached_count": 450,
+        "prompt_eval_duration": 102406000,
+        "eval_count": 33,
+        "eval_duration": 562282000
+      }
+    }
+  ]
+}

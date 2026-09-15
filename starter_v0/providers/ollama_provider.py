@@ -1,22 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from providers.base import ModelResponse, ToolCall
 
 
 class OllamaProvider:
-    """Ollama provider using the OpenAI-compatible Chat Completions API."""
+    """Native local Ollama chat API with normalized tool calls."""
 
-    def __init__(
-        self,
-        *,
-        base_url: str = "http://localhost:11434/v1",
-        default_model: str = "qwen2.5:1.5b",
-    ) -> None:
-        self.base_url = base_url
-        self.default_model = default_model
+    default_model = None
+
+    def __init__(self) -> None:
+        self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 
     def complete(
         self,
@@ -27,51 +26,44 @@ class OllamaProvider:
         temperature: float = 0.0,
         tool_choice: Any | None = None,
     ) -> ModelResponse:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError(
-                "Install live provider dependency first: pip install openai"
-            ) from exc
-
-        client = OpenAI(
-            api_key="ollama",
-            base_url=self.base_url,
-        )
-
-        kwargs: dict[str, Any] = {
-            "model": model or self.default_model,
+        if not model:
+            raise RuntimeError("Missing Ollama model. Pass --model qwen2.5:3b")
+        if tool_choice not in (None, "auto", "required", "none"):
+            raise ValueError("Ollama provider does not support forced named tool choices")
+        payload: dict[str, Any] = {
+            "model": model,
             "messages": messages,
-            "temperature": temperature,
+            "stream": False,
+            "keep_alive": "5m",
+            "options": {"temperature": temperature, "num_ctx": 8192},
         }
-
-        if tools:
-            kwargs["tools"] = tools
-
-        if tool_choice is not None:
-            kwargs["tool_choice"] = tool_choice
-
-        resp = client.chat.completions.create(**kwargs)
-
-        msg = resp.choices[0].message
-
-        calls: list[ToolCall] = []
-
-        for call in msg.tool_calls or []:
-            try:
-                args = json.loads(call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-
-            calls.append(
-                ToolCall(
-                    name=call.function.name,
-                    args=args,
-                )
-            )
-
-        return ModelResponse(
-            text=msg.content,
-            tool_calls=calls,
-            raw=resp,
+        # Native Ollama has no required-tool setting; preserve model-selected calls.
+        if tools and tool_choice != "none":
+            payload["tools"] = tools
+        request = Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
+        try:
+            with urlopen(request, timeout=300) as response:
+                raw = json.load(response)
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Ollama HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Cannot reach Ollama at {self.base_url}: {exc.reason}") from exc
+        if raw.get("error"):
+            raise RuntimeError(f"Ollama: {raw['error']}")
+        message = raw["message"]
+        calls: list[ToolCall] = []
+        for call in message.get("tool_calls") or []:
+            function = call["function"]
+            arguments = function.get("arguments", {})
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("Ollama tool arguments must be a JSON object")
+            calls.append(ToolCall(name=function["name"], args=arguments))
+        return ModelResponse(text=message.get("content"), tool_calls=calls, raw=raw)
