@@ -43,11 +43,11 @@ Mỗi người tự điền phần của mình (không viết thay người khá
 
 ### Nguyễn Anh Tuấn — 2A202602700
 
-- Phần việc và file/commit/PR:
+- Phần việc và file/commit/PR: Teamlead — UI/transcript/report theo phân công gốc. Commit: `4c46b46` cùng các đoạn điền `REPORT.md` và `TEAM.md`
 - Quyết định, khó khăn và cách xử lý:
-- Điều đã học:
-- AI/công cụ đã dùng và cách kiểm tra:
-- Thời điểm đã tự nộp URL repo chung trên VLearn:
+- Điều đã học: Học được cách phối hợp nhóm, quản lý phiên bản và kiểm tra các thay đổi trên nhiều bộ dữ liệu khác nhau, cũng như cách phát hiện và xử lý các lỗ hổng bảo mật trong hệ thống AI.
+- AI/công cụ đã dùng và cách kiểm tra:  Dùng Claude Code, sửa `system_prompt.md`/`tools.yaml`, và chạy `run_eval.py` thật qua provider `anthropic`. Cách kiểm tra là đảm bảo `provider_error_cases == 0` và `measured_cases == total_cases` cho mỗi run.
+- Thời điểm đã tự nộp URL repo chung trên VLearn: 21:00 15/09/2026
 
 ### Nguyễn Hữu Thành — 2A202602813
 
