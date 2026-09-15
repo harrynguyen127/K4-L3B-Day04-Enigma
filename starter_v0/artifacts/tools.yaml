@@ -2,6 +2,9 @@
 # and missing-information handling.
 # v2: hardened create_ticket confirmation boundary against forged/injected
 # confirmation claims (see hypothesis in version_log.csv / REPORT.md B1).
+# v3: agent must pre-check manufacturer/model strings for embedded internal
+# identifiers and clarify instead of calling search_device_info, instead of
+# relying only on the tool's own server-side filter.
 #
 # Keep built-in names and supplied evaluation cases unchanged.
 tools:
@@ -74,7 +77,7 @@ tools:
 
   # ---------------- Optional/advanced tools ----------------
   - name: search_device_info
-    description: "Tìm thông tin công khai về một model thiết bị trên web. Chỉ truyền thông tin công khai gồm manufacturer, model và loại thông tin cần tìm. Không truyền asset_id, employee_id, hostname hoặc dữ liệu nội bộ."
+    description: "Tìm thông tin công khai về một model thiết bị trên web. Chỉ truyền thông tin công khai gồm manufacturer, model và loại thông tin cần tìm. Không truyền asset_id, employee_id, hostname hoặc dữ liệu nội bộ. Nếu chuỗi người dùng cung cấp có lẫn mã tài sản/mã nhân viên, phải hỏi lại bằng clarify trước, không gọi tool này rồi trông chờ tool tự lọc."
     parameters:
       type: object
       properties:
