@@ -19,7 +19,7 @@
 | Nguyễn Hữu Thành | 2A202602813 | nhthanh1106 | Tiếp tục lặp (v2, v3): tiếp nối v1, mỗi vòng 1 giả thuyết + 1 thay đổi chính, chạy lại, so sánh metric/trace, cập nhật version log |  |
 | Hà Thị Mỹ Linh | 2A202602619 | | Bộ case & an toàn: viết 10 case nhóm (5 một lượt + 5 nhiều lượt) vào eval_group.json, chạy 12 case adversarial, phân tích ≥3 case (hỏi lại/xác nhận/hủy/dữ liệu) | `af3ea22` (`data/eval_group.json`, run group/adversarial, cập nhật REPORT.md) |
 | Đặng Quang Hưng | 2A202602719 | hungdq1306 | Baseline & Eval infra (v0): chạy preflight, chạy v0 gốc, đọc lỗi/trace, phân loại failure (sai tool/sai input/thiếu info/nhiều lượt/an toàn). Giao sản phẩm: log v0 + danh sách giả thuyết cho cả nhóm dùng | starter_v0/HYPOTHESES_v0.md, starter_v0/runs/v0_B_base_gemini_20260915T194456857558.json, starter_v0/artifacts/version_log.csv, starter_v0/run_eval.py, branch 0-quanghung |
-| Nguyễn Hoàng Anh | 2A202602811 | hoanganhIT04 | Prompt & tool declaration (v1): dựa trên giả thuyết của v0, sửa system_prompt.md + tools.yaml, chạy v1, so sánh với v0, ghi vào version_log.csv | starter_v0/artifacts/system_prompt.md, starter_v0/artifacts/tools.yaml, starter_v0/providers/__init__.py, starter_v0/providers/ollama_provider.py, starter_v0/run_eval.py |
+| Nguyễn Hoàng Anh | 2A202602811 | hoanganhIT04 | Prompt & tool declaration (v1): dựa trên giả thuyết của v0, sửa system_prompt.md + tools.yaml, chạy v1, so sánh với v0, ghi vào version_log.csv | Files: starter_v0/artifacts/system_prompt.md, starter_v0/artifacts/tools.yaml, starter_v0/providers/__init__.py, starter_v0/providers/ollama_provider.py, starter_v0/providers/ollama_plan_provider.py, starter_v0/artifacts/ollama_router_prompt.md, starter_v0/artifacts/ollama_planner_prompt.md, starter_v0/artifacts/OLLAMA_PIPELINE.md, starter_v0/run_eval.py, starter_v0/tests/test_ollama_plan_provider.py; Evidence: starter_v0/runs/v1_B_base_ollama_20260915T201500811475.json; Commit: 95a3a71; PR: chưa có |
 
 ## Quy trình v0–v3 và bàn giao
 
@@ -93,8 +93,25 @@ un_eval.py thêm tính năng batch pause (nghỉ 90s sau mỗi 2-4 cases) và c�
 
 ### Nguyễn Hoàng Anh — 2A202602811
 
-- Phần việc và file/commit/PR:Thực hiện cải tiến v1 cho IT Helpdesk Agent, tập trung vào routing tool và xử lý thông tin còn thiếu. Chỉnh sửa artifacts/system_prompt.md, artifacts/tools.yaml và run_eval.py; bổ sung providers/ollama_provider.py để hỗ trợ hướng chạy model local. Commit: 95a3a71 — Improve v1 routing and clarification behavior.
-- Quyết định, khó khăn và cách xử lý:Dựa trên trace của v0 để xác định các lỗi về chọn tool, tham số và thiếu thông tin. Bổ sung quy tắc phân biệt kiểm tra dịch vụ chung và kiểm tra thiết bị cụ thể, không tự đoán asset_id/employee_id, đồng thời yêu cầu xác nhận trước các thao tác tạo ticket. Khi thử chạy model local, phát hiện môi trường chưa có transformers nên cần bổ sung dependency.
-- Điều đã học:Học cách cải thiện agent dựa trên evidence từ evaluation thay vì sửa toàn bộ hệ thống. Hiểu rõ hơn cách system prompt và tool description ảnh hưởng đến routing, argument và clarification của agent.
-- AI/công cụ đã dùng và cách kiểm tra:Sử dụng ChatGPT để phân tích trace, đề xuất thay đổi prompt/tool schema và hỗ trợ xử lý Git. Sử dụng Python/PowerShell để chạy evaluation và kiểm tra model local; kiểm tra kết quả thông qua log, git status, commit và push lên GitHub.
-- Thời điểm đã tự nộp URL repo chung trên VLearn: 20:04:26 15/9/2026
+- Phần việc và file/commit/PR:
+  - Phụ trách **Prompt & tool declaration (v1)** cho IT Helpdesk Agent.
+  - Phân tích log v1 để xác định các lỗi chính: `wrong_tool`, `missing_info`, `wrong_boundary`, `unnecessary_tool`, `wrong_arg_value`.
+  - Sửa `starter_v0/artifacts/system_prompt.md` và `starter_v0/artifacts/tools.yaml` để agent phân biệt rõ khi nào cần gọi tool, khi nào phải hỏi lại, khi nào phải xác nhận trước khi tạo ticket.
+  - Bổ sung hỗ trợ chạy local bằng Ollama: `starter_v0/providers/ollama_provider.py`, cập nhật `starter_v0/providers/__init__.py` và `starter_v0/run_eval.py`.
+  - Tích hợp pipeline v1 cho model nhỏ Qwen 3B: route intent trước, controller kiểm tra scope/ID/environment, sau đó mới cho model lập kế hoạch tool call. Các file chính: `starter_v0/providers/ollama_plan_provider.py`, `starter_v0/artifacts/ollama_router_prompt.md`, `starter_v0/artifacts/ollama_planner_prompt.md`, `starter_v0/artifacts/OLLAMA_PIPELINE.md`.
+  - Kết quả tốt nhất: `starter_v0/runs/v1_B_base_ollama_20260915T201500811475.json` đạt **30/30 PASS**, `case_accuracy = 1.0`, `tool_routing_accuracy = 1.0`, `argument_accuracy = 1.0`, `multiturn_accuracy = 1.0`, `provider_error_cases = 0` với model local `qwen2.5:3b`.
+  - Commit đã có: `95a3a71` — Improve v1 routing and clarification behavior.
+- Quyết định, khó khăn và cách xử lý:
+  - *Khó khăn*: Khi chạy trực tiếp model nhỏ hoặc qua API free, agent dễ gọi sai tool, tự đoán `asset_id`/`employee_id`, gọi thừa tool ở câu chỉ cần format/report, hoặc không hỏi lại khi environment mơ hồ.
+  - *Cách xử lý*: Không dựa hoàn toàn vào khả năng tool-calling raw của model 3B. Tách pipeline thành 2 bước: router để nhận diện intent, sau đó controller ép ràng buộc bằng rule/schema trước khi planner sinh tool call. Vì vậy model nhỏ chỉ phải chọn trong không gian hẹp hơn.
+  - *Ví dụ sửa lỗi*: Thiếu asset thì bắt buộc `clarify(response_type="text")`; câu hỏi ngoài phạm vi thì không gọi tool; hỏi tạo ticket thì phải xác nhận `yes_no`; lỗi VPN chỉ cho phép `inspect_device(check="vpn")`; câu format report thì giữ nguyên title và không refetch dữ liệu.
+- Điều đã học:
+  - Học cách đọc trace/eval để sửa theo lỗi hệ thống báo thay vì sửa cảm tính.
+  - Hiểu rõ khác biệt giữa prompt thuần và pipeline có kiểm soát: prompt giúp định hướng, còn controller/schema giúp chặn lỗi thường gặp của model nhỏ.
+  - Biết cách đánh giá regression: mỗi lần sửa phải chạy lại toàn bộ 30 case, không chỉ chạy lại case từng fail.
+- AI/công cụ đã dùng và cách kiểm tra:
+  - Sử dụng ChatGPT/Codex để phân tích log, đề xuất thay đổi prompt/tool schema, viết pipeline Ollama và kiểm tra Git.
+  - Sử dụng Ollama local GPU với `qwen2.5:3b`, Python và PowerShell để chạy eval.
+  - Kiểm tra bằng `python -m unittest discover -s tests -v` và `python run_eval.py --provider ollama --model qwen2.5:3b --version v1 --suite base --eval-cases data/eval_base.json`.
+- Thời điểm đã tự nộp URL repo chung trên VLearn:
+  - Đã tự nộp URL repo chung trên VLearn lúc 20:04:26 ngày 15/09/2026.
