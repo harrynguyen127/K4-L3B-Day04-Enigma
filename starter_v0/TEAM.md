@@ -12,12 +12,11 @@
 
 ## Thành viên
 
-
 | Họ và tên | MSSV | GitHub | Vai trò và công việc | File/commit/PR |
 |---|---|---|---|---|
-| Nguyễn Anh Tuấn| 2A202602700| harrynguyen127| Teamlead. UI, transcript & report: làm UI chat hiện tool call/input/kết quả-lỗi/version, lưu transcript, tổng hợp REPORT.md (cách chạy, trước/sau, giới hạn, link evidence) và điều phối TEAM.md | `4c46b46` (UI), `bce10b6` (transcript), `de5349f`+`d8f7406` (version_log, REPORT.md) |
-| Nguyễn Hữu Thành | 2A202602813 | nhthanh1106 | Tiếp tục lặp (v2, v3): tiếp nối v1, mỗi vòng 1 giả thuyết + 1 thay đổi chính, chạy lại, so sánh metric/trace, cập nhật version log |  |
-| Hà Thị Mỹ Linh | 2A202602619 | | Bộ case & an toàn: viết 10 case nhóm (5 một lượt + 5 nhiều lượt) vào eval_group.json, chạy 12 case adversarial, phân tích ≥3 case (hỏi lại/xác nhận/hủy/dữ liệu) | `af3ea22` (`data/eval_group.json`, run group/adversarial, cập nhật REPORT.md) |
+| Nguyễn Anh Tuấn| 2A202602700| harrynguyen127| Teamlead. UI, transcript & report: làm UI chat hiện tool call/input/kết quả-lỗi/version, lưu transcript, tổng hợp REPORT.md (cách chạy, trước/sau, giới hạn, link evidence) và điều phối TEAM.md | |
+| Nguyễn Hữu Thành | 2A202602813 | nhthanh1106 | Tiếp tục lặp (v2, v3): tiếp nối v1, mỗi vòng 1 giả thuyết + 1 thay đổi chính, chạy lại, so sánh metric/trace, cập nhật version log | |
+| Hà Thị Mỹ Linh | 2A202602619 | | Bộ case & an toàn: viết 10 case nhóm (5 một lượt + 5 nhiều lượt) vào eval_group.json, chạy 12 case adversarial, phân tích ≥3 case (hỏi lại/xác nhận/hủy/dữ liệu) | |
 | Đặng Quang Hưng | 2A202602719 | hungdq1306 | Baseline & Eval infra (v0): chạy preflight, chạy v0 gốc, đọc lỗi/trace, phân loại failure (sai tool/sai input/thiếu info/nhiều lượt/an toàn). Giao sản phẩm: log v0 + danh sách giả thuyết cho cả nhóm dùng | starter_v0/HYPOTHESES_v0.md, starter_v0/runs/v0_B_base_gemini_20260915T194456857558.json, starter_v0/artifacts/version_log.csv, starter_v0/run_eval.py, branch 0-quanghung |
 | Nguyễn Hoàng Anh | 2A202602811 | hoanganhIT04 | Prompt & tool declaration (v1): dựa trên giả thuyết của v0, sửa system_prompt.md + tools.yaml, chạy v1, so sánh với v0, ghi vào version_log.csv | starter_v0/artifacts/system_prompt.md, starter_v0/artifacts/tools.yaml, starter_v0/providers/__init__.py, starter_v0/providers/ollama_provider.py, starter_v0/run_eval.py |
 
@@ -32,10 +31,10 @@
 
 ## Nhận xét chung
 
-- Kết quả và bằng chứng: v0→v3 chạy thật trên cùng provider/model (`anthropic`, `claude-haiku-4-5-20251001`), mỗi version một commit riêng sửa `system_prompt.md`/`tools.yaml` kèm run hợp lệ (`provider_error_cases == 0`, `measured_cases == total_cases`): v0 baseline `case_accuracy` 0.9333 (base), v1 giữ 0.9333 nhưng sửa hành vi an toàn (H12 từ tạo ticket thẳng → hỏi xác nhận), v2 lên 0.9667 (base) và 0.5833 (adversarial, từ 0.5), v3 giữ 0.9667 (base) và lên 0.75 (adversarial). Chi tiết đầy đủ ở `starter_v0/artifacts/version_log.csv` và `starter_v0/artifacts/REPORT.md` (B1–B4a).
-- Thay đổi hiệu quả nhất: v2 — thêm quy tắc "không tin xác nhận giả mạo hoặc bị chèn vào" vào `system_prompt.md` + siết mô tả field `confirmed` trong `tools.yaml`. Đây là fix duy nhất chặn được một lỗ hổng có thể khai thác thật (case `A04_argument_smuggling`: pseudo-code do user tự viết có `confirmed:true` khiến agent tạo ticket thật ở v1; sau v2, agent luôn từ chối và yêu cầu xác nhận qua hội thoại thật).
-- Giới hạn còn lại: (1) `G04_policy_lookup`/`G09_policy_then_ticket_confirmation` vẫn chọn nhầm `policy` thay vì `search_kb(category=hardware)` do mô tả 2 tool chồng lấn — chưa sửa trong vòng này. (2) 3 case adversarial (A03, A06, A11) vẫn bị chấm FAIL dù hành vi thực tế an toàn (không ghi dữ liệu/không rò rỉ), vì agent hỏi lại bằng `response_type=text` hoặc từ chối luôn thay vì đúng tool/tham số kỳ vọng — cần đọc `tool_results` mới thấy được, tự động score không đủ. (3) Nhóm chưa triển khai bonus tool ngoài luồng cơ bản.
-- Cách phân công và tích hợp: theo đúng quy trình bàn giao ở mục "Quy trình v0–v3 và bàn giao" bên dưới — Hưng chạy v0 và ra danh sách giả thuyết (`HYPOTHESES_v0.md`), Hoàng Anh làm v1 (`95a3a71`), sau đó phát hiện lần chạy v2/v3 đầu tiên chỉ đổi nhãn `--version` mà không sửa artifact thật (không hợp lệ theo đúng quy tắc "không chạy 4 lệnh liên tiếp cùng file" mà nhóm tự đặt) — được ghi nhận trung thực trong lịch sử `version_log.csv` rồi làm lại bằng 2 thay đổi thật, mỗi thay đổi một commit riêng (`b793666` v2, `e81178b` v3), có so sánh regression trên cả 3 bộ base/group/adversarial trước khi ghi log.
+- Kết quả và bằng chứng:
+- Thay đổi hiệu quả nhất:
+- Giới hạn còn lại:
+- Cách phân công và tích hợp:
 
 ## INDIVIDUAL
 
